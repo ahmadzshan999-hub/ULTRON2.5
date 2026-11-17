@@ -1,21 +1,32 @@
-]
 import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.SUPABASE_URL;
-const key = process.env.SUPABASE_ANON_KEY;
+let authClient = null;
 
-const authClient = url && key
-  ? createClient(url, key, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false
-      }
-    })
-  : null;
+function getAuthClient() {
+  if (authClient) return authClient;
+
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    return null;
+  }
+
+  authClient = createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  });
+
+  return authClient;
+}
 
 export async function authenticate(req, res, next) {
   try {
-    if (!authClient) {
+    const supabase = getAuthClient();
+
+    if (!supabase) {
       return res.status(503).json({
         error: 'Supabase server configuration is missing.'
       });
@@ -29,9 +40,15 @@ export async function authenticate(req, res, next) {
       });
     }
 
-    const token = authorization.slice(7);
+    const token = authorization.slice(7).trim();
 
-    const { data, error } = await authClient.auth.getUser(token);
+    if (!token) {
+      return res.status(401).json({
+        error: 'Authentication token is missing.'
+      });
+    }
+
+    const { data, error } = await supabase.auth.getUser(token);
 
     if (error || !data?.user) {
       return res.status(401).json({
@@ -40,7 +57,8 @@ export async function authenticate(req, res, next) {
     }
 
     req.user = data.user;
-    next();
+    req.accessToken = token;
+    return next();
   } catch (error) {
     console.error('Authentication error:', error);
 
