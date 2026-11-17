@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState } from 'react';
 import { supabase, supabaseConfigured } from './supabase';
 
@@ -15,8 +14,11 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
+
   const bottomRef = useRef(null);
   const abortRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     if (!supabaseConfigured) {
@@ -33,21 +35,22 @@ export default function App() {
       setLoading(false);
     });
 
-    const { data } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
-        setSession(newSession);
-      }
-    );
+    const { data } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
 
     return () => {
       mounted = false;
       data.subscription.unsubscribe();
+      abortRef.current?.abort();
+      recognitionRef.current?.abort();
     };
   }, []);
 
   useEffect(() => {
-    if (session) loadChats();
-    else {
+    if (session) {
+      loadChats();
+    } else {
       setChats([]);
       setMessages([]);
       setActiveChat(null);
@@ -92,6 +95,7 @@ export default function App() {
   }
 
   async function openChat(id) {
+    abortRef.current?.abort();
     setError('');
     setActiveChat(id);
     setMessages([]);
@@ -126,8 +130,8 @@ export default function App() {
     if ((!text && !file) || busy) return;
 
     const attachment = file;
-    const displayText = text +
-      (attachment ? `\n[Attached: ${attachment.name}]` : '');
+    const displayText =
+      text + (attachment ? `\n[Attached: ${attachment.name}]` : '');
 
     setInput('');
     setFile(null);
@@ -137,7 +141,7 @@ export default function App() {
     const temporaryUserId = crypto.randomUUID();
     const temporaryAssistantId = crypto.randomUUID();
 
-    setMessages(old => [
+    setMessages((old) => [
       ...old,
       {
         id: temporaryUserId,
@@ -151,9 +155,10 @@ export default function App() {
       }
     ]);
 
-    try {
-      let conversationId = activeChat;
+    let conversationId = activeChat;
+    let answer = '';
 
+    try {
       if (!conversationId) {
         const { data, error } = await supabase
           .from('conversations')
@@ -170,14 +175,12 @@ export default function App() {
         setActiveChat(conversationId);
       }
 
-      const { error: saveError } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: conversationId,
-          user_id: session.user.id,
-          role: 'user',
-          content: displayText
-        });
+      const { error: saveError } = await supabase.from('messages').insert({
+        conversation_id: conversationId,
+        user_id: session.user.id,
+        role: 'user',
+        content: displayText
+      });
 
       if (saveError) throw saveError;
 
@@ -185,9 +188,11 @@ export default function App() {
       form.append('message', text);
 
       const history = messages
-        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .filter(
+          (m) => (m.role === 'user' || m.role === 'assistant') && m.content
+        )
         .slice(-12)
-        .map(m => ({
+        .map((m) => ({
           role: m.role,
           content: m.content
         }));
@@ -219,7 +224,6 @@ export default function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let answer = '';
 
       while (true) {
         const { value, done } = await reader.read();
@@ -234,11 +238,17 @@ export default function App() {
         for (const frame of frames) {
           const line = frame
             .split('\n')
-            .find(part => part.startsWith('data:'));
+            .map((part) => part.replace(/\r$/, ''))
+            .find((part) => part.startsWith('data:'));
 
           if (!line) continue;
 
-          const payload = JSON.parse(line.slice(5).trim());
+          let payload;
+          try {
+            payload = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
 
           if (payload.error) {
             throw new Error(payload.error);
@@ -247,11 +257,13 @@ export default function App() {
           if (payload.delta) {
             answer += payload.delta;
 
-            setMessages(old => old.map(message =>
-              message.id === temporaryAssistantId
-                ? { ...message, content: answer }
-                : message
-            ));
+            setMessages((old) =>
+              old.map((message) =>
+                message.id === temporaryAssistantId
+                  ? { ...message, content: answer }
+                  : message
+              )
+            );
           }
         }
 
@@ -280,14 +292,26 @@ export default function App() {
 
       await loadChats();
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      if (err.name === 'AbortError' && answer.trim() && conversationId) {
+        // Persist partial response if the user stopped generation mid-stream
+        await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          user_id: session.user.id,
+          role: 'assistant',
+          content: answer
+        });
+        await loadChats();
+      } else if (err.name !== 'AbortError') {
         setError(err.message || 'Something went wrong.');
       }
 
-      setMessages(old => old.filter(message =>
-        message.id !== temporaryAssistantId ||
-        message.content.length > 0
-      ));
+      setMessages((old) =>
+        old.filter(
+          (message) =>
+            message.id !== temporaryAssistantId ||
+            message.content.trim().length > 0
+        )
+      );
     } finally {
       setBusy(false);
       abortRef.current = null;
@@ -333,17 +357,31 @@ export default function App() {
       return;
     }
 
+    recognitionRef.current?.abort();
+
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     recognition.lang = 'en-US';
-    recognition.onresult = event => {
-      setInput(current =>
-        `${current} ${event.results[0][0].transcript}`.trim()
-      );
+    recognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript || '';
+      if (transcript) {
+        setInput((current) => `${current} ${transcript}`.trim());
+      }
     };
     recognition.onerror = () => {
       setError('Voice input could not start. Check your microphone permission.');
     };
     recognition.start();
+  }
+
+  async function handleCopy(id, content) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500);
+    } catch {
+      setError('Could not copy text to clipboard.');
+    }
   }
 
   if (loading) {
@@ -356,12 +394,12 @@ export default function App() {
         <div className="brand-mark">U</div>
         <h1>ULTRON needs configuration</h1>
         <p>
-          Supabase is not configured. The frontend cannot sign in
-          until its public project URL and publishable key are set.
+          Supabase is not configured. The frontend cannot sign in until its
+          public project URL and publishable key are set.
         </p>
         <p className="muted">
-          Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
-          in your environment settings.
+          Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment
+          settings.
         </p>
       </div>
     );
@@ -379,7 +417,7 @@ export default function App() {
             type="email"
             placeholder="Email address"
             value={email}
-            onChange={e => setEmail(e.target.value)}
+            onChange={(e) => setEmail(e.target.value)}
             required
           />
 
@@ -387,7 +425,7 @@ export default function App() {
             type="password"
             placeholder="Password (minimum 6 characters)"
             value={password}
-            onChange={e => setPassword(e.target.value)}
+            onChange={(e) => setPassword(e.target.value)}
             minLength={6}
             required
           />
@@ -402,7 +440,7 @@ export default function App() {
             className="text-button"
             type="button"
             onClick={() => {
-              setSignup(value => !value);
+              setSignup((value) => !value);
               setError('');
             }}
           >
@@ -430,7 +468,7 @@ export default function App() {
         <div className="history-heading">YOUR CHATS</div>
 
         <div className="history-list">
-          {chats.map(chat => (
+          {chats.map((chat) => (
             <div
               key={chat.id}
               className={`history-item ${activeChat === chat.id ? 'selected' : ''}`}
@@ -464,16 +502,18 @@ export default function App() {
 
         <div className="account-area">
           <span>{session.user.email}</span>
-          <button onClick={() => supabase.auth.signOut()}>
-            Sign out
-          </button>
+          <button onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
       </aside>
 
       <main className="main-panel">
         <header className="topbar">
-          <strong>ULTRON <span>AI</span></strong>
-          <span className="status"><i /> Ready</span>
+          <strong>
+            ULTRON <span>AI</span>
+          </strong>
+          <span className="status">
+            <i /> Ready
+          </span>
         </header>
 
         <section className="conversation">
@@ -484,7 +524,7 @@ export default function App() {
               <p>Ask a question, explore an idea or upload a document.</p>
             </div>
           ) : (
-            messages.map(message => (
+            messages.map((message) => (
               <article
                 key={message.id}
                 className={`message ${message.role}`}
@@ -498,11 +538,9 @@ export default function App() {
                 {message.role === 'assistant' && message.content && (
                   <button
                     className="copy-button"
-                    onClick={() =>
-                      navigator.clipboard.writeText(message.content)
-                    }
+                    onClick={() => handleCopy(message.id, message.content)}
                   >
-                    Copy response
+                    {copiedId === message.id ? 'Copied!' : 'Copy response'}
                   </button>
                 )}
               </article>
@@ -513,7 +551,7 @@ export default function App() {
 
         {error && (
           <div className="error-banner" role="alert">
-            {error}
+            <span>{error}</span>
             <button onClick={() => setError('')}>Dismiss</button>
           </div>
         )}
@@ -531,16 +569,19 @@ export default function App() {
             <input
               type="file"
               accept=".txt,.md,.csv,.pdf,.docx"
-              onChange={event => setFile(event.target.files?.[0] || null)}
+              onChange={(event) => {
+                setFile(event.target.files?.[0] || null);
+                event.target.value = '';
+              }}
             />
           </label>
 
           <textarea
             value={input}
-            onChange={event => setInput(event.target.value)}
+            onChange={(event) => setInput(event.target.value)}
             placeholder="Message ULTRON..."
             rows={1}
-            onKeyDown={event => {
+            onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 sendMessage();
