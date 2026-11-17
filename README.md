@@ -1,58 +1,55 @@
-# ULTRON
+# ULTRON AI — corrected full-stack project
 
-A full-stack AI chat app built with React + Vite, Express, Supabase Auth/Postgres, and the OpenAI Responses API.
+ULTRON is a React/Vite frontend with an Express API, Supabase authentication and private chat storage, and OpenAI Responses API streaming.
+
+## Included
+
+- `client/` — complete responsive frontend, startup/error screens, styles and app icon
+- `server/` — API server, Supabase token verification, AI streaming and document extraction
+- `supabase/schema.sql` — database tables, indexes, grants and row-level security policies
+- `Dockerfile` and `render.yaml` — Node hosting configuration
+- `.env.example` and `.env` — environment-variable templates (replace placeholders before use)
+
+## Required account settings
+
+Set these values in the private root `.env` file for local use, or in your hosting provider's environment-variable settings for a deployed app:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY` (or a supported Supabase publishable key)
+- `VITE_SUPABASE_URL` — same project URL
+- `VITE_SUPABASE_ANON_KEY` — same public anon/publishable key
+- `OPENAI_API_KEY` — private server-side OpenAI API key
+- `OPENAI_MODEL` — a model enabled for the OpenAI API project
+
+Never put the OpenAI secret key in a variable beginning with `VITE_` and never commit a real `.env` file.
+
+## Supabase setup
+
+1. Create a Supabase project.
+2. Open its SQL Editor and run `supabase/schema.sql`.
+3. Enable email/password authentication and configure email confirmation as desired.
+4. Put the project URL and public anon/publishable key in the environment settings above.
+
+## Local development
+
+Use Node.js 20 or newer. Install the dependencies and start the development app using the scripts in `package.json`. The Vite frontend is served on port 5173 and forwards `/api` requests to the Express server on port 3000.
+
+## Production hosting
+
+This is a full-stack Node application. It cannot run correctly on static-only hosting such as GitHub Pages because its Express API must also run. Deploy the project as a Node web service using the included `render.yaml` or `Dockerfile`. The service must build the Vite frontend and run the Express server from the same deployment. Set the environment variables in the host dashboard before deploying.
+
+The `/api/health` endpoint reports whether Supabase and OpenAI environment settings are present. The app now displays a readable setup or runtime-error screen instead of silently showing a blank page when frontend initialization fails.
 
 ## Features
-- Email/password sign-up, sign-in and sign-out through Supabase Auth
-- Private conversation history stored in Supabase with Row Level Security
-- Streaming AI responses (server-side; API key is never exposed to the browser)
-- New chats, rename, delete, reopen conversations
-- Attach TXT, Markdown, CSV and PDF files as context
-- Browser speech-to-text (where supported) and text-to-speech
+
+- Email/password signup and login
+- Private conversation history with Supabase row-level security
+- Streaming assistant responses
+- New chats, chat history and deletion
+- TXT, MD, CSV, PDF and DOCX file text extraction (8 MB maximum)
+- Browser speech recognition where supported
 - Responsive dark interface
 
-## 1. Requirements
-- Node.js 20+
-- A Supabase project
-- An OpenAI API key with API billing/credits enabled
+## Cost and limitations
 
-## 2. Supabase setup
-1. Create a Supabase project.
-2. Open **SQL Editor**, create a new query, and run `supabase/schema.sql`.
-3. In **Authentication → Providers**, enable Email.
-4. For a simple development setup, you can turn off email confirmation in **Authentication → Settings**. For production, keep confirmation on and configure your email provider.
-5. Copy the Project URL and publishable/anon key from Project Settings → API.
-
-## 3. Environment variables
-Copy `.env.example` to `.env` in the project root and fill in the values:
-
-- `SUPABASE_URL`: Supabase Project URL
-- `SUPABASE_ANON_KEY`: Supabase publishable/anon key
-- `OPENAI_API_KEY`: secret OpenAI API key (server only)
-- `OPENAI_MODEL`: model available to your OpenAI project (default `gpt-5.5`)
-
-Never put `OPENAI_API_KEY` in a `VITE_` variable or commit `.env`.
-
-## 4. Install and run
-From the project root:
-
-```bash
-npm install
-npm run dev
-```
-
-Open the local URL printed by Vite (normally http://localhost:5173).
-
-## 5. Production build
-```bash
-npm run build
-npm start
-```
-The Express server serves the built React app from `client/dist` on port 3000.
-
-## Important notes
-- This is a real app starter, not a hosted service. You must configure your own keys and database.
-- OpenAI API usage may cost money. Set spending limits in your OpenAI platform account.
-- PDF extraction is best-effort; scanned/image-only PDFs need OCR, which is not included.
-- Voice input uses the browser's Web Speech API and is not supported in every browser.
-- Add rate limiting, monitoring, abuse controls, and stricter upload limits before making this public.
+OpenAI API usage is billed separately from a ChatGPT subscription. The API model must be enabled for the OpenAI account. Speech recognition depends on browser support and microphone permission. This project has not been independently security-audited.
