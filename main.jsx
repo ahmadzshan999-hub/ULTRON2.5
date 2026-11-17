@@ -1,9 +1,10 @@
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import './styles.css';
 
-class AppErrorBoundary extends React.Component {
+class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { error: null };
@@ -14,32 +15,38 @@ class AppErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('ULTRON render error:', error, info);
+    console.error('ULTRON frontend error:', error, info);
   }
 
   render() {
     if (this.state.error) {
       return (
-        <main className="fatal-screen">
-          <div className="fatal-card">
-            <div className="brand-mark">U</div>
-            <h1>ULTRON could not start</h1>
-            <p>The interface encountered an error instead of loading. Refresh the page. If it continues, share this error with the app developer.</p>
-            <pre>{this.state.error.message || String(this.state.error)}</pre>
-            <button className="primary-button" onClick={() => window.location.reload()}>Reload ULTRON</button>
-          </div>
-        </main>
+        <div className="fatal-error">
+          <h1>ULTRON could not start</h1>
+          <p>{this.state.error.message}</p>
+          <p>Check the browser console for the full error.</p>
+          <button onClick={() => window.location.reload()}>
+            Reload ULTRON
+          </button>
+        </div>
       );
     }
+
     return this.props.children;
   }
 }
 
-const root = createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-  </React.StrictMode>
-);
+const rootElement = document.getElementById('root');
+
+if (!rootElement) {
+  document.body.innerHTML =
+    '<h1 style="color:white;padding:30px">ULTRON error: root element missing.</h1>';
+} else {
+  createRoot(rootElement).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+}
