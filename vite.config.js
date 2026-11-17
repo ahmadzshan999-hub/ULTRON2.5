@@ -6,7 +6,7 @@ export default defineConfig({
   base: '/ULTRON2.5/',
   server: {
     proxy: {
-      '/api': 'http://localhost:3000'
-    }
-  }
+      '/api': 'http://localhost:3000',
+    },
+  },
 });
